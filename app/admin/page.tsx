@@ -34,10 +34,6 @@ interface DonationCampaign {
   status: string
 }
 
-// Admin credentials - In production, use environment variables
-const ADMIN_USERNAME = process.env.ADMIN_USERNAME 
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD 
-
 export default function AdminPage() {
   // Authentication state
   const [isAuthenticated, setIsAuthenticated] = useState(false)
@@ -45,6 +41,7 @@ export default function AdminPage() {
   const [loginPassword, setLoginPassword] = useState("")
   const [loginError, setLoginError] = useState("")
   const [checkingAuth, setCheckingAuth] = useState(true)
+  const [isLoggingIn, setIsLoggingIn] = useState(false)
 
   const [showForm, setShowForm] = useState(false)
   const [showCampaignForm, setShowCampaignForm] = useState(false)
@@ -99,18 +96,39 @@ export default function AdminPage() {
     }
   }, [isAuthenticated])
 
-  // Login handler
-  function handleLogin(e: React.FormEvent) {
+  // Login handler - calls backend API
+  async function handleLogin(e: React.FormEvent) {
     e.preventDefault()
     setLoginError("")
+    setIsLoggingIn(true)
 
-    if (loginUsername === ADMIN_USERNAME && loginPassword === ADMIN_PASSWORD) {
-      setIsAuthenticated(true)
-      localStorage.setItem("admin_auth", "authenticated")
-      setLoginUsername("")
-      setLoginPassword("")
-    } else {
-      setLoginError("Invalid username or password")
+    try {
+      const response = await fetch("/api/admin-login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          username: loginUsername,
+          password: loginPassword,
+        }),
+      })
+
+      const data = await response.json()
+
+      if (data.success) {
+        setIsAuthenticated(true)
+        localStorage.setItem("admin_auth", "authenticated")
+        setLoginUsername("")
+        setLoginPassword("")
+      } else {
+        setLoginError(data.error || "Invalid username or password")
+      }
+    } catch (error) {
+      console.error("Login error:", error)
+      setLoginError("An error occurred. Please try again.")
+    } finally {
+      setIsLoggingIn(false)
     }
   }
 
@@ -646,9 +664,10 @@ export default function AdminPage() {
 
             <Button
               type="submit"
-              className="w-full bg-gradient-to-r from-[#B4D700] to-[#6B8C0A] text-[#2B2015] font-bold py-4 text-lg hover:shadow-xl transition"
+              disabled={isLoggingIn}
+              className="w-full bg-gradient-to-r from-[#B4D700] to-[#6B8C0A] text-[#2B2015] font-bold py-4 text-lg hover:shadow-xl transition disabled:opacity-50"
             >
-              🔐 LOGIN
+              {isLoggingIn ? "⏳ Logging in..." : "🔐 LOGIN"}
             </Button>
           </form>
 
