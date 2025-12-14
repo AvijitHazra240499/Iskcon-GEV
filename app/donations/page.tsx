@@ -5,7 +5,8 @@ import Link from "next/link"
 import { createClient } from "@/lib/supabase/client"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts"
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from "recharts"
+import QRCode from "qrcode"
 
 interface Activity {
   people_served: number
@@ -37,7 +38,7 @@ interface RecentDonation {
   } | null
 }
 
-const COLORS = ["#FF6B35", "#B4D700", "#1E3A8A", "#9333EA"]
+const COLORS = ["#FF6B35", "#B4D700", "#3B82F6", "#9333EA", "#10B981", "#F59E0B"]
 
 export default function DonationsPage() {
   const [campaigns, setCampaigns] = useState<DonationCampaign[]>([])
@@ -55,9 +56,13 @@ export default function DonationsPage() {
   const [showCustomInput, setShowCustomInput] = useState(false)
   const [manualCampaignName, setManualCampaignName] = useState("")
   const [showManualCampaign, setShowManualCampaign] = useState(false)
+  const [qrCodeUrl, setQrCodeUrl] = useState<string>("")
+  const [baseUpiText, setBaseUpiText] = useState<string>("")
+  const [showQRModal, setShowQRModal] = useState(false)
 
   useEffect(() => {
     loadDonationData()
+    loadQRCode()
     const script = document.createElement("script")
     script.src = "https://checkout.razorpay.com/v1/checkout.js"
     script.async = true
@@ -124,6 +129,60 @@ export default function DonationsPage() {
       donationSubscription.unsubscribe()
     }
   }, [])
+
+  async function loadQRCode() {
+    try {
+      const supabase = createClient()
+      const { data, error } = await supabase
+        .from("settings")
+        .select("value")
+        .eq("key", "donation_qr_text")
+        .single()
+
+      if (!error && data && data.value) {
+        // Store the base UPI text (without amount)
+        setBaseUpiText(data.value)
+      }
+    } catch (err) {
+      console.error("Error loading QR code:", err)
+    }
+  }
+
+  // Generate QR code with amount included
+  async function generateQRWithAmount(amount: string) {
+    if (!baseUpiText) return
+
+    try {
+      // Parse the UPI URL and add/update the amount
+      let upiWithAmount = baseUpiText
+      
+      // Check if it's a UPI URL
+      if (baseUpiText.includes("upi://")) {
+        // Remove existing amount parameter if present
+        upiWithAmount = baseUpiText.replace(/&am=[^&]*/g, "").replace(/\?am=[^&]*&?/g, "?")
+        
+        // Add the new amount
+        if (upiWithAmount.includes("?")) {
+          upiWithAmount = `${upiWithAmount}&am=${amount}`
+        } else {
+          upiWithAmount = `${upiWithAmount}?am=${amount}`
+        }
+      }
+
+      // Generate QR code with amount
+      const qrDataUrl = await QRCode.toDataURL(upiWithAmount, {
+        width: 300,
+        margin: 2,
+        color: {
+          dark: "#000000",
+          light: "#FFFFFF",
+        },
+      })
+      setQrCodeUrl(qrDataUrl)
+    } catch (err) {
+      console.error("Error generating QR code:", err)
+    }
+  }
 
   async function loadRecentDonations() {
     try {
@@ -414,20 +473,28 @@ export default function DonationsPage() {
                   nameKey="type"
                   cx="50%"
                   cy="50%"
-                  outerRadius={100}
-                  label={({ type, people_served }) => `${type}: ${people_served}`}
+                  outerRadius={80}
                 >
-                  {COLORS.map((color, index) => (
-                    <Cell key={`cell-${index}`} fill={color} />
+                  {costData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                   ))}
                 </Pie>
                 <Tooltip
                   contentStyle={{
-                    backgroundColor: "#2B2015",
+                    backgroundColor: "#FFFFFF",
                     border: "2px solid #B4D700",
                     borderRadius: "8px",
-                    color: "#F5F1E8",
+                    color: "#000000",
                   }}
+                  itemStyle={{ color: "#000000" }}
+                  labelStyle={{ color: "#000000", fontWeight: "bold" }}
+                  formatter={(value: number, name: string) => [`${value.toLocaleString()} people`, name]}
+                />
+                <Legend 
+                  layout="vertical" 
+                  align="right" 
+                  verticalAlign="middle"
+                  wrapperStyle={{ color: "#F5F1E8", fontSize: "12px" }}
                 />
               </PieChart>
             </ResponsiveContainer>
@@ -441,10 +508,10 @@ export default function DonationsPage() {
             <Card className="bg-gradient-to-br from-[#4A3F33] to-[#3A2F25] border-2 border-[#1E3A8A] p-8 shadow-xl rounded-2xl">
               <h2 className="text-white font-bold text-2xl mb-8 flex items-center gap-2">
                 <span className="text-[#1E3A8A]">💝</span>
-                Active Campaigns
+                Active Campaigns ({campaigns.length})
               </h2>
               <div className="space-y-6">
-                {campaigns.map((campaign) => {
+                {campaigns.slice(0, 5).map((campaign) => {
                   const percentage = (campaign.raised_amount / campaign.target_amount) * 100
                   return (
                     <div key={campaign.id} className="border-b-2 border-[#6B5A4A] pb-6 last:border-b-0 last:pb-0">
@@ -473,6 +540,13 @@ export default function DonationsPage() {
                   )
                 })}
               </div>
+              {campaigns.length > 5 && (
+                <Link href="/impact" className="block mt-6">
+                  <button className="w-full bg-gradient-to-r from-[#1E3A8A] to-[#1E40AF] text-white py-3 rounded-lg font-bold hover:shadow-xl transition">
+                    View All {campaigns.length} Campaigns →
+                  </button>
+                </Link>
+              )}
             </Card>
           )}
 
@@ -612,15 +686,28 @@ export default function DonationsPage() {
                 </p>
               </div>
 
-              <Button
-                onClick={handleDonate}
-                className="w-full bg-gradient-to-r from-[#FF6B35] to-[#B4D700] text-[#2B2015] font-bold py-4 text-lg hover:shadow-xl hover:scale-105 transition"
-              >
-                DONATE NOW
-              </Button>
+              <div className="flex gap-3">
+                <Button
+                  onClick={handleDonate}
+                  className="flex-1 bg-gradient-to-r from-[#FF6B35] to-[#B4D700] text-[#2B2015] font-bold py-4 text-lg hover:shadow-xl hover:scale-105 transition"
+                >
+                  💳 PAY ONLINE
+                </Button>
+                {baseUpiText && (
+                  <Button
+                    onClick={async () => {
+                      await generateQRWithAmount(donationAmount || "0")
+                      setShowQRModal(true)
+                    }}
+                    className="flex-1 bg-gradient-to-r from-[#9333EA] to-[#7E22CE] text-white font-bold py-4 text-lg hover:shadow-xl hover:scale-105 transition"
+                  >
+                    📱 SCAN QR
+                  </Button>
+                )}
+              </div>
 
               <p className="text-white/50 text-xs text-center">
-                Secured payment via Razorpay. 100% of your donation goes to seva.
+                Pay online via Razorpay or scan QR code for UPI payment. 100% goes to seva.
               </p>
             </div>
           </Card>
@@ -682,6 +769,53 @@ export default function DonationsPage() {
           </p>
         </Card>
       </div>
+
+      {/* QR Code Modal */}
+      {showQRModal && qrCodeUrl && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+          <div className="bg-gradient-to-br from-[#4A3F33] to-[#3A2F25] rounded-2xl p-8 max-w-md w-full border-4 border-[#B4D700] shadow-2xl">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-2xl font-bold text-white">📱 Scan to Pay</h3>
+              <button
+                onClick={() => setShowQRModal(false)}
+                className="text-white/60 hover:text-white text-2xl font-bold"
+              >
+                ✕
+              </button>
+            </div>
+            
+            <div className="bg-white p-4 rounded-xl mb-6 flex justify-center">
+              <img
+                src={qrCodeUrl}
+                alt="Payment QR Code"
+                className="max-w-[280px] max-h-[280px] object-contain"
+              />
+            </div>
+
+            <div className="text-center space-y-3">
+              <p className="text-white font-bold text-xl">
+                Amount: ₹{donationAmount || "0"}
+              </p>
+              <p className="text-white/70 text-sm">
+                Scan this QR code with any UPI app to make your donation
+              </p>
+              <div className="flex gap-2 justify-center flex-wrap">
+                <span className="bg-[#2B2015] text-white/60 px-3 py-1 rounded-full text-xs">Google Pay</span>
+                <span className="bg-[#2B2015] text-white/60 px-3 py-1 rounded-full text-xs">PhonePe</span>
+                <span className="bg-[#2B2015] text-white/60 px-3 py-1 rounded-full text-xs">Paytm</span>
+                <span className="bg-[#2B2015] text-white/60 px-3 py-1 rounded-full text-xs">BHIM</span>
+              </div>
+            </div>
+
+            <button
+              onClick={() => setShowQRModal(false)}
+              className="w-full mt-6 bg-gradient-to-r from-[#B4D700] to-[#6B8C0A] text-[#2B2015] font-bold py-3 rounded-lg hover:shadow-xl transition"
+            >
+              Done
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

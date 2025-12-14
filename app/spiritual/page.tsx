@@ -188,16 +188,16 @@ export default function SpiritualPage() {
           </p>
           <div className="flex gap-4 justify-center flex-wrap">
             <Link
-              href="/admin"
+              href="/donations"
               className="bg-white text-[#FF6B35] px-8 py-4 rounded-lg font-bold hover:scale-105 transition shadow-lg"
             >
-              ✓ VOLUNTEER TODAY
+              💝 SUPPORT US
             </Link>
             <Link
-              href="/donations"
+              href="/impact"
               className="bg-white/20 border-2 border-white text-white px-8 py-4 rounded-lg font-bold hover:bg-white/30 transition"
             >
-              💝 SUPPORT US
+              📊 VIEW OUR IMPACT
             </Link>
           </div>
         </Card>

@@ -20,6 +20,7 @@ interface Donation {
 export default function DonationsList() {
   const [donations, setDonations] = useState<Donation[]>([])
   const [loading, setLoading] = useState(true)
+  const [deleting, setDeleting] = useState<string | null>(null)
 
   useEffect(() => {
     loadDonations()
@@ -69,6 +70,26 @@ export default function DonationsList() {
       console.error("Error loading donations:", err)
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function handleDelete(donationId: string) {
+    if (!confirm("Are you sure you want to delete this donation record? This action cannot be undone.")) {
+      return
+    }
+
+    setDeleting(donationId)
+    try {
+      const supabase = createClient()
+      const { error } = await supabase.from("donations").delete().eq("id", donationId)
+      if (error) throw error
+      loadDonations()
+      alert("Donation deleted successfully!")
+    } catch (err) {
+      console.error("Error deleting donation:", err)
+      alert("Failed to delete donation")
+    } finally {
+      setDeleting(null)
     }
   }
 
@@ -122,20 +143,29 @@ export default function DonationsList() {
                   <p className="text-white/60 text-xs mt-1">Donor: {donation.donor_email}</p>
                 )}
               </div>
-              <div className="text-right">
-                <p className="text-white/60 text-xs">
-                  {new Date(donation.created_at).toLocaleDateString("en-IN", {
-                    day: "numeric",
-                    month: "short",
-                    year: "numeric",
-                  })}
-                </p>
-                <p className="text-white/60 text-xs">
-                  {new Date(donation.created_at).toLocaleTimeString("en-IN", {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })}
-                </p>
+              <div className="text-right flex flex-col items-end gap-2">
+                <div>
+                  <p className="text-white/60 text-xs">
+                    {new Date(donation.created_at).toLocaleDateString("en-IN", {
+                      day: "numeric",
+                      month: "short",
+                      year: "numeric",
+                    })}
+                  </p>
+                  <p className="text-white/60 text-xs">
+                    {new Date(donation.created_at).toLocaleTimeString("en-IN", {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                  </p>
+                </div>
+                <button
+                  onClick={() => handleDelete(donation.id)}
+                  disabled={deleting === donation.id}
+                  className="bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded-lg text-xs font-bold transition disabled:opacity-50"
+                >
+                  {deleting === donation.id ? "⏳ Deleting..." : "🗑️ Delete"}
+                </button>
               </div>
             </div>
           </Card>

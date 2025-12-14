@@ -196,9 +196,9 @@ export default function HomePage() {
             Join our volunteer network or donate to help us serve more devotees and uplift communities
           </p>
           <div className="flex gap-4 justify-center flex-wrap">
-            <Link href="/admin">
+            <Link href="/impact">
               <Button className="bg-white text-[#FF6B35] px-8 py-6 text-lg font-bold hover:scale-105 transition shadow-lg">
-                RECORD SEVA ACTIVITY
+                VIEW OUR IMPACT
               </Button>
             </Link>
             <Link href="/donations">

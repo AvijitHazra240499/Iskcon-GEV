@@ -58,7 +58,7 @@ interface DonationCampaign {
   created_at: string
 }
 
-const COLORS = ["#FF6B35", "#B4D700", "#ff0000ff", "#9333EA", "#FF8C42"]
+const COLORS = ["#FF6B35", "#B4D700", "#3B82F6", "#9333EA", "#10B981", "#F59E0B"]
 
 export default function ImpactPage() {
   const [activities, setActivities] = useState<Activity[]>([])
@@ -325,14 +325,14 @@ export default function ImpactPage() {
             <ResponsiveContainer width="100%" height={300}>
               <PieChart>
                 <Pie
-                  data={activityTypeStats}
+                  data={activityTypeStats as any}
                   cx="50%"
                   cy="50%"
                   labelLine={false}
-                  label={({ name, value, percent }) => `${name}: ${value.toLocaleString()} (${(percent * 100).toFixed(0)}%)`}
                   outerRadius={80}
                   fill="#8884d8"
                   dataKey="value"
+                  nameKey="name"
                 >
                   {activityTypeStats.map((entry, index) => (
                     <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
@@ -343,9 +343,17 @@ export default function ImpactPage() {
                     backgroundColor: "#FFFFFF",
                     border: "2px solid #B4D700",
                     borderRadius: "8px",
-                    color: "#F5F1E8",
+                    color: "#000000",
                   }}
-                  formatter={(value: number) => [`${value.toLocaleString()} people`, "Served"]}
+                  itemStyle={{ color: "#000000" }}
+                  labelStyle={{ color: "#000000", fontWeight: "bold" }}
+                  formatter={(value: number, name: string) => [`${value.toLocaleString()} people`, name]}
+                />
+                <Legend 
+                  layout="vertical" 
+                  align="right" 
+                  verticalAlign="middle"
+                  wrapperStyle={{ color: "#F5F1E8", fontSize: "12px" }}
                 />
               </PieChart>
             </ResponsiveContainer>
@@ -402,7 +410,7 @@ export default function ImpactPage() {
                 </tr>
               </thead>
               <tbody>
-                {activities.slice(0, 15).map((activity, idx) => (
+                {activities.map((activity, idx) => (
                   <tr
                     key={activity.id}
                     className={`border-b border-[#6B5A4A] hover:bg-[#3A2F25] transition ${idx % 2 === 0 ? "bg-[#2B2015]/50" : ""}`}
@@ -514,8 +522,7 @@ export default function ImpactPage() {
                     cx="50%"
                     cy="50%"
                     labelLine={false}
-                    label={({ name, percent }: any) => `${name}: ${((percent || 0) * 100).toFixed(0)}%`}
-                    outerRadius={100}
+                    outerRadius={80}
                     fill="#8884d8"
                     dataKey="value"
                   >
@@ -525,14 +532,21 @@ export default function ImpactPage() {
                   </Pie>
                   <Tooltip
                     contentStyle={{
-                      backgroundColor: "#2B2015",
+                      backgroundColor: "#FFFFFF",
                       border: "2px solid #1E3A8A",
                       borderRadius: "8px",
-                      color: "#F5F1E8",
+                      color: "#000000",
                     }}
+                    itemStyle={{ color: "#000000" }}
+                    labelStyle={{ color: "#000000", fontWeight: "bold" }}
                     formatter={(value: number) => [`₹${value.toLocaleString()}`, "Target Amount"]}
                   />
-                  <Legend />
+                  <Legend 
+                    layout="vertical" 
+                    align="right" 
+                    verticalAlign="middle"
+                    wrapperStyle={{ color: "#F5F1E8", fontSize: "12px" }}
+                  />
                 </PieChart>
               </ResponsiveContainer>
             </div>

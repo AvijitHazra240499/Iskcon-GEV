@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import Link from "next/link"
 import { createClient } from "@/lib/supabase/client"
 import { Card } from "@/components/ui/card"
@@ -10,6 +10,8 @@ import { Button } from "@/components/ui/button"
 import ActivityForm from "@/components/admin/activity-form"
 import ActivityList from "@/components/admin/activity-list"
 import DonationsList from "@/components/admin/donations-list"
+import QRCode from "qrcode"
+import jsQR from "jsqr"
 
 interface Activity {
   id: string
@@ -32,7 +34,18 @@ interface DonationCampaign {
   status: string
 }
 
+// Admin credentials - In production, use environment variables
+const ADMIN_USERNAME = "admin"
+const ADMIN_PASSWORD = "govardhan@2025"
+
 export default function AdminPage() {
+  // Authentication state
+  const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const [loginUsername, setLoginUsername] = useState("")
+  const [loginPassword, setLoginPassword] = useState("")
+  const [loginError, setLoginError] = useState("")
+  const [checkingAuth, setCheckingAuth] = useState(true)
+
   const [showForm, setShowForm] = useState(false)
   const [showCampaignForm, setShowCampaignForm] = useState(false)
   const [editingActivity, setEditingActivity] = useState<Activity | null>(null)
@@ -58,10 +71,54 @@ export default function AdminPage() {
     total_quantity: "",
     category: "Food Distribution",
   })
+  const [showDataManagement, setShowDataManagement] = useState(false)
+  const [deletingAllActivities, setDeletingAllActivities] = useState(false)
+  const [deletingAllCampaigns, setDeletingAllCampaigns] = useState(false)
+  const [deletingAllDonations, setDeletingAllDonations] = useState(false)
+  const [deletingAllMedia, setDeletingAllMedia] = useState(false)
+  const [showQRSettings, setShowQRSettings] = useState(false)
+  const [qrCodeUrl, setQrCodeUrl] = useState<string>("")
+  const [qrCodeText, setQrCodeText] = useState<string>("")
+  const [uploadingQR, setUploadingQR] = useState(false)
+  const [scanningQR, setScanningQR] = useState(false)
+  const qrCanvasRef = useRef<HTMLCanvasElement>(null)
+
+  // Check if already logged in (from localStorage)
+  useEffect(() => {
+    const authToken = localStorage.getItem("admin_auth")
+    if (authToken === "authenticated") {
+      setIsAuthenticated(true)
+    }
+    setCheckingAuth(false)
+  }, [])
 
   useEffect(() => {
-    loadData()
-  }, [])
+    if (isAuthenticated) {
+      loadData()
+      loadQRCode()
+    }
+  }, [isAuthenticated])
+
+  // Login handler
+  function handleLogin(e: React.FormEvent) {
+    e.preventDefault()
+    setLoginError("")
+
+    if (loginUsername === ADMIN_USERNAME && loginPassword === ADMIN_PASSWORD) {
+      setIsAuthenticated(true)
+      localStorage.setItem("admin_auth", "authenticated")
+      setLoginUsername("")
+      setLoginPassword("")
+    } else {
+      setLoginError("Invalid username or password")
+    }
+  }
+
+  // Logout handler
+  function handleLogout() {
+    setIsAuthenticated(false)
+    localStorage.removeItem("admin_auth")
+  }
 
   async function loadData() {
     const supabase = createClient()
@@ -105,6 +162,158 @@ export default function AdminPage() {
     }
 
     setLoading(false)
+  }
+
+  async function loadQRCode() {
+    try {
+      const supabase = createClient()
+      const { data, error } = await supabase
+        .from("settings")
+        .select("value")
+        .eq("key", "donation_qr_text")
+        .single()
+
+      if (!error && data) {
+        setQrCodeText(data.value)
+        // Generate QR code from text
+        generateQRCode(data.value)
+      }
+    } catch (err) {
+      console.error("Error loading QR code:", err)
+    }
+  }
+
+  async function generateQRCode(text: string) {
+    try {
+      const qrDataUrl = await QRCode.toDataURL(text, {
+        width: 300,
+        margin: 2,
+        color: {
+          dark: "#000000",
+          light: "#FFFFFF",
+        },
+      })
+      setQrCodeUrl(qrDataUrl)
+    } catch (err) {
+      console.error("Error generating QR code:", err)
+    }
+  }
+
+  async function handleQRUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    setScanningQR(true)
+    try {
+      // Read the image file
+      const imageData = await readImageFile(file)
+      
+      // Scan QR code using jsQR
+      const code = jsQR(imageData.data, imageData.width, imageData.height)
+      
+      if (!code) {
+        alert("Failed to scan QR code. Please make sure the image contains a valid QR code.")
+        setScanningQR(false)
+        return
+      }
+
+      const decodedText = code.data
+      console.log("Decoded QR text:", decodedText)
+      setQrCodeText(decodedText)
+
+      // Generate new QR code from the extracted text
+      await generateQRCode(decodedText)
+
+      // Save the text to settings table
+      try {
+        const supabase = createClient()
+        const { error: settingsError } = await supabase
+          .from("settings")
+          .upsert({ key: "donation_qr_text", value: decodedText }, { onConflict: "key" })
+
+        if (settingsError) {
+          console.error("Database error:", settingsError)
+          alert("QR Code scanned successfully! But failed to save to database. Please create the 'settings' table.")
+        } else {
+          alert("QR Code scanned and saved successfully!")
+        }
+      } catch (dbErr) {
+        console.error("Database error:", dbErr)
+        alert("QR Code scanned successfully! But failed to save to database. Please create the 'settings' table.")
+      }
+    } catch (err) {
+      console.error("Error scanning QR:", err)
+      alert("Failed to scan QR code. Please make sure the image contains a valid QR code.")
+    } finally {
+      setScanningQR(false)
+    }
+  }
+
+  // Helper function to read image file and get pixel data
+  function readImageFile(file: File): Promise<ImageData> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = (e) => {
+        const img = new Image()
+        img.onload = () => {
+          const canvas = document.createElement("canvas")
+          canvas.width = img.width
+          canvas.height = img.height
+          const ctx = canvas.getContext("2d")
+          if (!ctx) {
+            reject(new Error("Could not get canvas context"))
+            return
+          }
+          ctx.drawImage(img, 0, 0)
+          const imageData = ctx.getImageData(0, 0, img.width, img.height)
+          resolve(imageData)
+        }
+        img.onerror = () => reject(new Error("Could not load image"))
+        img.src = e.target?.result as string
+      }
+      reader.onerror = () => reject(new Error("Could not read file"))
+      reader.readAsDataURL(file)
+    })
+  }
+
+  async function handleManualTextSave() {
+    if (!qrCodeText.trim()) {
+      alert("Please enter UPI text")
+      return
+    }
+
+    try {
+      // Generate QR code from text
+      await generateQRCode(qrCodeText)
+
+      // Save to settings table
+      const supabase = createClient()
+      const { error: settingsError } = await supabase
+        .from("settings")
+        .upsert({ key: "donation_qr_text", value: qrCodeText }, { onConflict: "key" })
+
+      if (settingsError) throw settingsError
+
+      alert("QR Code saved successfully!")
+    } catch (err) {
+      console.error("Error saving QR:", err)
+      alert("Failed to save QR code")
+    }
+  }
+
+  async function removeQRCode() {
+    if (!confirm("Are you sure you want to remove the QR code?")) return
+
+    try {
+      const supabase = createClient()
+      await supabase.from("settings").delete().eq("key", "donation_qr_text")
+      setQrCodeUrl("")
+      setQrCodeText("")
+      alert("QR Code removed successfully!")
+    } catch (err) {
+      console.error("Error removing QR:", err)
+      alert("Failed to remove QR code")
+    }
   }
 
   const handleEditClick = (activity: Activity) => {
@@ -276,6 +485,183 @@ export default function AdminPage() {
     }
   }
 
+  // Bulk Delete Functions
+  async function deleteAllActivities() {
+    if (!confirm("⚠️ WARNING: This will DELETE ALL seva activities from the database. This action CANNOT be undone. Are you sure?")) {
+      return
+    }
+    if (!confirm("🚨 FINAL CONFIRMATION: All activity data will be permanently lost. Type 'DELETE' in the next prompt to confirm.")) {
+      return
+    }
+    const confirmText = prompt("Type 'DELETE' to confirm deletion of all activities:")
+    if (confirmText !== "DELETE") {
+      alert("Deletion cancelled. Text did not match.")
+      return
+    }
+
+    setDeletingAllActivities(true)
+    try {
+      const supabase = createClient()
+      const { error } = await supabase.from("activities").delete().neq("id", "00000000-0000-0000-0000-000000000000")
+      if (error) throw error
+      loadData()
+      alert("✅ All activities deleted successfully!")
+    } catch (err) {
+      console.error("Error deleting activities:", err)
+      alert("Failed to delete activities")
+    } finally {
+      setDeletingAllActivities(false)
+    }
+  }
+
+  async function deleteAllCampaigns() {
+    if (!confirm("⚠️ WARNING: This will DELETE ALL donation campaigns from the database. This action CANNOT be undone. Are you sure?")) {
+      return
+    }
+    const confirmText = prompt("Type 'DELETE' to confirm deletion of all campaigns:")
+    if (confirmText !== "DELETE") {
+      alert("Deletion cancelled. Text did not match.")
+      return
+    }
+
+    setDeletingAllCampaigns(true)
+    try {
+      const supabase = createClient()
+      const { error } = await supabase.from("donation_campaigns").delete().neq("id", "00000000-0000-0000-0000-000000000000")
+      if (error) throw error
+      loadData()
+      alert("✅ All campaigns deleted successfully!")
+    } catch (err) {
+      console.error("Error deleting campaigns:", err)
+      alert("Failed to delete campaigns")
+    } finally {
+      setDeletingAllCampaigns(false)
+    }
+  }
+
+  async function deleteAllDonations() {
+    if (!confirm("⚠️ WARNING: This will DELETE ALL donation records from the database. This action CANNOT be undone. Are you sure?")) {
+      return
+    }
+    const confirmText = prompt("Type 'DELETE' to confirm deletion of all donations:")
+    if (confirmText !== "DELETE") {
+      alert("Deletion cancelled. Text did not match.")
+      return
+    }
+
+    setDeletingAllDonations(true)
+    try {
+      const supabase = createClient()
+      const { error } = await supabase.from("donations").delete().neq("id", "00000000-0000-0000-0000-000000000000")
+      if (error) throw error
+      alert("✅ All donations deleted successfully!")
+    } catch (err) {
+      console.error("Error deleting donations:", err)
+      alert("Failed to delete donations")
+    } finally {
+      setDeletingAllDonations(false)
+    }
+  }
+
+  async function deleteAllMedia() {
+    if (!confirm("⚠️ WARNING: This will DELETE ALL media/gallery items from the database. This action CANNOT be undone. Are you sure?")) {
+      return
+    }
+    const confirmText = prompt("Type 'DELETE' to confirm deletion of all media:")
+    if (confirmText !== "DELETE") {
+      alert("Deletion cancelled. Text did not match.")
+      return
+    }
+
+    setDeletingAllMedia(true)
+    try {
+      const supabase = createClient()
+      const { error } = await supabase.from("media").delete().neq("id", "00000000-0000-0000-0000-000000000000")
+      if (error) throw error
+      alert("✅ All media deleted successfully!")
+    } catch (err) {
+      console.error("Error deleting media:", err)
+      alert("Failed to delete media")
+    } finally {
+      setDeletingAllMedia(false)
+    }
+  }
+
+  // Show loading state while checking auth
+  if (checkingAuth) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-[#2B2015] via-[#4A3F33] to-[#2B2015] flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-16 w-16 border-4 border-[#B4D700] border-t-transparent mx-auto mb-4"></div>
+          <p className="text-white/70 text-lg">Loading...</p>
+        </div>
+      </div>
+    )
+  }
+
+  // Show login form if not authenticated
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-[#2B2015] via-[#4A3F33] to-[#2B2015] flex items-center justify-center px-4">
+        <Card className="bg-gradient-to-br from-[#4A3F33] to-[#3A2F25] border-4 border-[#B4D700] p-10 shadow-2xl rounded-2xl w-full max-w-md">
+          <div className="text-center mb-8">
+            <img
+              src="/logo-govardhan-circle.png"
+              alt="Govardhan Annakshetra"
+              className="w-20 h-20 rounded-full border-4 border-[#B4D700] mx-auto mb-4"
+            />
+            <h1 className="text-3xl font-bold text-white mb-2">Admin Login</h1>
+            <p className="text-white/60">Enter your credentials to access the admin panel</p>
+          </div>
+
+          <form onSubmit={handleLogin} className="space-y-6">
+            <div>
+              <label className="block text-white/80 font-semibold mb-2">Username</label>
+              <input
+                type="text"
+                value={loginUsername}
+                onChange={(e) => setLoginUsername(e.target.value)}
+                className="w-full bg-[#2B2015] border-2 border-[#B4D700] text-white px-4 py-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#FF6B35]"
+                placeholder="Enter username"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-white/80 font-semibold mb-2">Password</label>
+              <input
+                type="password"
+                value={loginPassword}
+                onChange={(e) => setLoginPassword(e.target.value)}
+                className="w-full bg-[#2B2015] border-2 border-[#B4D700] text-white px-4 py-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#FF6B35]"
+                placeholder="Enter password"
+                required
+              />
+            </div>
+
+            {loginError && (
+              <div className="bg-red-500/20 border border-red-500 text-red-400 px-4 py-3 rounded-lg text-center">
+                {loginError}
+              </div>
+            )}
+
+            <Button
+              type="submit"
+              className="w-full bg-gradient-to-r from-[#B4D700] to-[#6B8C0A] text-[#2B2015] font-bold py-4 text-lg hover:shadow-xl transition"
+            >
+              🔐 LOGIN
+            </Button>
+          </form>
+
+          <div className="mt-6 text-center">
+            <Link href="/" className="text-[#B4D700] hover:text-[#FF6B35] transition font-medium">
+              ← Back to Home
+            </Link>
+          </div>
+        </Card>
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#2B2015] via-[#4A3F33] to-[#2B2015]">
       {/* Navigation */}
@@ -300,21 +686,29 @@ export default function AdminPage() {
               <Link href="/donations" className="text-white hover:text-[#9333EA] transition font-medium">
                 Donations
               </Link>
+              <button
+                onClick={handleLogout}
+                className="bg-red-500/20 text-red-400 hover:bg-red-500/30 px-4 py-2 rounded-lg font-medium transition"
+              >
+                🚪 Logout
+              </button>
             </div>
           </div>
         </div>
       </nav>
 
       <div className="max-w-7xl mx-auto px-4 py-12 sm:px-6 lg:px-8">
-        {/* Tabs for Activities and Campaigns */}
+        {/* Tabs for Activities, Campaigns, QR Settings, and Data Management */}
         <div className="flex gap-4 mb-12 border-b-2 border-[#6B5A4A] overflow-x-auto">
           <button
             onClick={() => {
               setShowForm(false)
               setShowCampaignForm(false)
+              setShowDataManagement(false)
+              setShowQRSettings(false)
             }}
             className={`px-6 py-3 font-bold transition whitespace-nowrap ${
-              !showCampaignForm
+              !showCampaignForm && !showDataManagement && !showQRSettings
                 ? "text-[#B4D700] border-b-2 border-[#B4D700]"
                 : "text-white/70 hover:text-white"
             }`}
@@ -325,19 +719,271 @@ export default function AdminPage() {
             onClick={() => {
               setShowCampaignForm(true)
               setShowForm(false)
+              setShowDataManagement(false)
+              setShowQRSettings(false)
             }}
             className={`px-6 py-3 font-bold transition whitespace-nowrap ${
-              showCampaignForm
+              showCampaignForm && !showDataManagement && !showQRSettings
                 ? "text-[#FF6B35] border-b-2 border-[#FF6B35]"
                 : "text-white/70 hover:text-white"
             }`}
           >
             Donation Campaigns
           </button>
+          <button
+            onClick={() => {
+              setShowQRSettings(true)
+              setShowCampaignForm(false)
+              setShowForm(false)
+              setShowDataManagement(false)
+            }}
+            className={`px-6 py-3 font-bold transition whitespace-nowrap ${
+              showQRSettings
+                ? "text-[#9333EA] border-b-2 border-[#9333EA]"
+                : "text-white/70 hover:text-white"
+            }`}
+          >
+            📱 QR Code Settings
+          </button>
+          <button
+            onClick={() => {
+              setShowDataManagement(true)
+              setShowCampaignForm(false)
+              setShowForm(false)
+              setShowQRSettings(false)
+            }}
+            className={`px-6 py-3 font-bold transition whitespace-nowrap ${
+              showDataManagement
+                ? "text-red-500 border-b-2 border-red-500"
+                : "text-white/70 hover:text-white"
+            }`}
+          >
+            🗑️ Data Management
+          </button>
         </div>
 
+        {/* QR Code Settings Section */}
+        {showQRSettings && (
+          <>
+            <div className="mb-12">
+              <h1 className="text-5xl font-bold text-white mb-2">📱 QR Code Settings</h1>
+              <p className="text-white/70 text-lg">Upload or enter UPI payment details for donations</p>
+            </div>
+
+
+
+            <Card className="bg-gradient-to-br from-[#4A3F33] to-[#3A2F25] border-4 border-[#9333EA] p-10 shadow-2xl rounded-2xl">
+              <div className="grid md:grid-cols-2 gap-8">
+                {/* Upload/Input Section */}
+                <div>
+                  <h2 className="text-2xl font-bold text-white mb-6">Option 1: Upload QR Image</h2>
+                  <p className="text-white/70 mb-4">
+                    Upload your existing UPI QR code image. We'll scan it and extract the payment details automatically.
+                  </p>
+                  
+                  <div className="space-y-4">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleQRUpload}
+                      disabled={scanningQR}
+                      className="w-full bg-[#2B2015] text-white border-2 border-[#B4D700] rounded-lg px-4 py-3 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-[#B4D700] file:text-[#2B2015] file:font-semibold hover:file:bg-[#6B8C0A] file:cursor-pointer disabled:opacity-50"
+                    />
+                    {scanningQR && (
+                      <p className="text-[#B4D700] font-semibold">⏳ Scanning QR code...</p>
+                    )}
+                  </div>
+
+                  <div className="mt-8">
+                    <h2 className="text-2xl font-bold text-white mb-6">Option 2: Enter UPI ID Manually</h2>
+                    <p className="text-white/70 mb-4">
+                      Or enter your UPI ID/link directly and we'll generate a QR code for you.
+                    </p>
+                    <div className="space-y-4">
+                      <input
+                        type="text"
+                        value={qrCodeText}
+                        onChange={(e) => setQrCodeText(e.target.value)}
+                        placeholder="e.g., upi://pay?pa=yourname@upi&pn=YourName"
+                        className="w-full bg-[#2B2015] text-white border-2 border-[#B4D700] rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-[#FF6B35]"
+                      />
+                      <Button
+                        onClick={handleManualTextSave}
+                        className="w-full bg-gradient-to-r from-[#B4D700] to-[#6B8C0A] text-[#2B2015] font-bold py-3"
+                      >
+                        Generate & Save QR Code
+                      </Button>
+                    </div>
+                  </div>
+
+                  {qrCodeUrl && (
+                    <Button
+                      onClick={removeQRCode}
+                      className="mt-6 bg-red-600 hover:bg-red-700 text-white font-bold"
+                    >
+                      🗑️ Remove QR Code
+                    </Button>
+                  )}
+                </div>
+
+                {/* Preview Section */}
+                <div>
+                  <h2 className="text-2xl font-bold text-white mb-6">Generated QR Code</h2>
+                  {qrCodeUrl ? (
+                    <div className="space-y-4">
+                      <div className="bg-white p-4 rounded-xl inline-block">
+                        <img
+                          src={qrCodeUrl}
+                          alt="Payment QR Code"
+                          className="max-w-[250px] max-h-[250px] object-contain"
+                        />
+                      </div>
+                      {qrCodeText && (
+                        <div className="bg-[#2B2015] p-4 rounded-lg">
+                          <p className="text-white/60 text-xs mb-1">Extracted/Entered UPI Text:</p>
+                          <p className="text-[#B4D700] text-sm font-mono break-all">{qrCodeText}</p>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="bg-[#2B2015] border-2 border-dashed border-[#6B5A4A] rounded-xl p-12 text-center">
+                      <div className="text-6xl mb-4">📱</div>
+                      <p className="text-white/60">No QR code generated yet</p>
+                      <p className="text-white/40 text-sm mt-2">Upload a QR image or enter UPI details</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Instructions */}
+              <div className="mt-8 p-6 bg-[#2B2015] rounded-lg border-l-4 border-[#B4D700]">
+                <h3 className="text-white font-bold mb-3">💡 How it works</h3>
+                <ul className="text-white/70 space-y-2 text-sm">
+                  <li>• <strong>Option 1:</strong> Upload your existing UPI QR code image - we'll scan and extract the payment link</li>
+                  <li>• <strong>Option 2:</strong> Enter your UPI ID manually (e.g., yourname@upi or full UPI link)</li>
+                  <li>• A new QR code will be generated from the extracted/entered text</li>
+                  <li>• This QR code will be shown on the donations page for users to scan</li>
+                </ul>
+              </div>
+            </Card>
+          </>
+        )}
+
+        {/* Data Management Section */}
+        {showDataManagement && !showQRSettings && (
+          <>
+            <div className="mb-12">
+              <h1 className="text-5xl font-bold text-white mb-2">🗑️ Data Management</h1>
+              <p className="text-white/70 text-lg">Delete old data from database to keep it clean</p>
+            </div>
+
+            <div className="grid md:grid-cols-2 gap-8">
+              {/* Delete All Activities */}
+              <Card className="bg-gradient-to-br from-[#4A3F33] to-[#3A2F25] border-2 border-red-500 p-8 shadow-xl rounded-2xl">
+                <div className="flex items-center gap-4 mb-4">
+                  <div className="text-4xl">📋</div>
+                  <div>
+                    <h3 className="text-xl font-bold text-white">Seva Activities</h3>
+                    <p className="text-white/60 text-sm">Total: {activities.length} entries</p>
+                  </div>
+                </div>
+                <p className="text-white/70 mb-6">
+                  Delete all seva activity records from the database. This will reset all activity data and charts.
+                </p>
+                <Button
+                  onClick={deleteAllActivities}
+                  disabled={deletingAllActivities}
+                  className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-4 transition disabled:opacity-50"
+                >
+                  {deletingAllActivities ? "⏳ DELETING..." : "🗑️ DELETE ALL ACTIVITIES"}
+                </Button>
+              </Card>
+
+              {/* Delete All Campaigns */}
+              <Card className="bg-gradient-to-br from-[#4A3F33] to-[#3A2F25] border-2 border-red-500 p-8 shadow-xl rounded-2xl">
+                <div className="flex items-center gap-4 mb-4">
+                  <div className="text-4xl">💝</div>
+                  <div>
+                    <h3 className="text-xl font-bold text-white">Donation Campaigns</h3>
+                    <p className="text-white/60 text-sm">Total: {campaigns.length} campaigns</p>
+                  </div>
+                </div>
+                <p className="text-white/70 mb-6">
+                  Delete all donation campaign records. This will remove all campaign progress data.
+                </p>
+                <Button
+                  onClick={deleteAllCampaigns}
+                  disabled={deletingAllCampaigns}
+                  className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-4 transition disabled:opacity-50"
+                >
+                  {deletingAllCampaigns ? "⏳ DELETING..." : "🗑️ DELETE ALL CAMPAIGNS"}
+                </Button>
+              </Card>
+
+              {/* Delete All Donations */}
+              <Card className="bg-gradient-to-br from-[#4A3F33] to-[#3A2F25] border-2 border-red-500 p-8 shadow-xl rounded-2xl">
+                <div className="flex items-center gap-4 mb-4">
+                  <div className="text-4xl">💰</div>
+                  <div>
+                    <h3 className="text-xl font-bold text-white">Donation Records</h3>
+                    <p className="text-white/60 text-sm">All payment records</p>
+                  </div>
+                </div>
+                <p className="text-white/70 mb-6">
+                  Delete all donation payment records. This will clear the donation history.
+                </p>
+                <Button
+                  onClick={deleteAllDonations}
+                  disabled={deletingAllDonations}
+                  className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-4 transition disabled:opacity-50"
+                >
+                  {deletingAllDonations ? "⏳ DELETING..." : "🗑️ DELETE ALL DONATIONS"}
+                </Button>
+              </Card>
+
+              {/* Delete All Media */}
+              <Card className="bg-gradient-to-br from-[#4A3F33] to-[#3A2F25] border-2 border-red-500 p-8 shadow-xl rounded-2xl">
+                <div className="flex items-center gap-4 mb-4">
+                  <div className="text-4xl">🖼️</div>
+                  <div>
+                    <h3 className="text-xl font-bold text-white">Gallery Media</h3>
+                    <p className="text-white/60 text-sm">All images and videos</p>
+                  </div>
+                </div>
+                <p className="text-white/70 mb-6">
+                  Delete all media records from gallery. Note: Files on Google Drive won't be deleted.
+                </p>
+                <Button
+                  onClick={deleteAllMedia}
+                  disabled={deletingAllMedia}
+                  className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-4 transition disabled:opacity-50"
+                >
+                  {deletingAllMedia ? "⏳ DELETING..." : "🗑️ DELETE ALL MEDIA"}
+                </Button>
+              </Card>
+            </div>
+
+            {/* Warning Notice */}
+            <Card className="bg-gradient-to-br from-red-900/30 to-red-800/20 border-2 border-red-500 p-8 mt-8 shadow-xl rounded-2xl">
+              <div className="flex items-start gap-4">
+                <div className="text-4xl">⚠️</div>
+                <div>
+                  <h3 className="text-xl font-bold text-red-400 mb-2">Important Warning</h3>
+                  <ul className="text-white/70 space-y-2 text-sm">
+                    <li>• All deletions are <span className="text-red-400 font-bold">PERMANENT</span> and cannot be undone</li>
+                    <li>• You will be asked to type 'DELETE' to confirm each action</li>
+                    <li>• Charts and statistics will be reset after deletion</li>
+                    <li>• Consider exporting data before deletion if needed</li>
+                    <li>• Use this feature only when you need to clear old/test data</li>
+                  </ul>
+                </div>
+              </div>
+            </Card>
+          </>
+        )}
+
         {/* Activities Section */}
-        {!showCampaignForm && (
+        {!showCampaignForm && !showDataManagement && !showQRSettings && (
           <>
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-12">
               <div>
@@ -366,7 +1012,7 @@ export default function AdminPage() {
         )}
 
         {/* Campaigns Section */}
-        {showCampaignForm && (
+        {showCampaignForm && !showDataManagement && !showQRSettings && (
           <>
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-12">
               <div>
