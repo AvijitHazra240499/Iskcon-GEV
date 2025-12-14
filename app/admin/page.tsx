@@ -35,8 +35,8 @@ interface DonationCampaign {
 }
 
 // Admin credentials - In production, use environment variables
-const ADMIN_USERNAME = "admin"
-const ADMIN_PASSWORD = "govardhan@2025"
+const ADMIN_USERNAME = process.env.ADMIN_USERNAME 
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD 
 
 export default function AdminPage() {
   // Authentication state
